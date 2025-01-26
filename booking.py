@@ -1,9 +1,16 @@
-#booking
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import firebase_admin
+from firebase_admin import credentials, firestore
 
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app)
+
+# Initialize Firebase
+cred = credentials.Certificate("path/to/serviceAccountKey.json")
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -11,32 +18,36 @@ def webhook():
     intent = req['queryResult']['intent']['displayName']
 
     if intent == "Search Guides":
-        location = req['queryResult']['parameters'].get('geo-city', 'your location')
-        language = req['queryResult']['parameters'].get('Language')
-        date = req['queryResult']['parameters'].get('date')
+        location = req['queryResult']['parameters'].get('geo-city', 'your location').lower()
+        language = req['queryResult']['parameters'].get('Language', '').lower()
 
-        # Mock data for guide search
-        guides = [
-            {"name": "John Doe", "language": "English", "contact": "1234567890"},
-            {"name": "Ravi Kumar", "language": "Hindi", "contact": "9876543210"},
-        ]
+        try:
+            # Fetch guides from Firebase
+            guides_ref = db.collection('guides')
+            guides = [
+                guide.to_dict()
+                for guide in guides_ref.stream()
+                if guide.to_dict().get('location', '').lower() == location and
+                   guide.to_dict().get('language', '').lower() == language
+            ]
 
-        # Filter guides by language
-        filtered_guides = [
-            guide for guide in guides if guide['language'].lower() == language.lower()
-        ]
+            if guides:
+                guide_list = "\n".join(
+                    [f"{g['name']} (Language: {g['language']}, Contact: {g['contact']})"
+                     for g in guides]
+                )
+                return jsonify({
+                    "fulfillmentText": f"Found the following guides in {location}:\n{guide_list}\nWould you like to book one?"
+                })
+            else:
+                return jsonify({
+                    "fulfillmentText": f"Sorry, no guides are available in {location} who speak {language}."
+                })
 
-        if filtered_guides:
-            guide_list = "\n".join(
-                [f"{g['name']} (Language: {g['language']}, Contact: {g['contact']})"
-                 for g in filtered_guides]
-            )
+        except Exception as e:
+            print(f"Error: {e}")
             return jsonify({
-                "fulfillmentText": f"Found the following guides in {location}:\n{guide_list}\nWould you like to book one?"
-            })
-        else:
-            return jsonify({
-                "fulfillmentText": f"Sorry, no guides are available in {location} who speak {language}."
+                "fulfillmentText": "An error occurred while searching for guides. Please try again later."
             })
 
     elif intent == "Confirm and Request Guide":
@@ -50,4 +61,4 @@ def webhook():
 
 
 if __name__ == "__main__":
-    app.run(port=5000)
+    app.run(host = "0.0.0.0",port=5000)
